@@ -99,8 +99,9 @@ def job_handler(data):
     logs = open(data['log'], 'w')
     user = data['user']
     cmd = data['cmd']
+    cwd = data['cwd']
     cmd = shlex.split("sudo -u {} {}".format(shlex.quote(user), shlex.quote(cmd)))
-    subprocess.run(cmd, stdout=logs, stderr=subprocess.STDOUT)
+    subprocess.run(cmd, stdout=logs, stderr=subprocess.STDOUT, cwd=cwd)
 
 def job_request_handler(data):
     host = None
@@ -184,26 +185,38 @@ def listen_loop():
         st = server(csock, addr)
         st.start()
 
-if len(sys.argv) == 1:
-    print("Please specify \"server\" or \"client\"")
-    sys.exit(1)
+def client(user, cmd, log, cwd):
+    req = {
+            'user' : user,
+            'cmd' : cmd,
+            'log' : log,
+            'cwd' : cwd
+            }
 
-if sys.argv[1] == "server":
-    hearbeat().start()
-    cleaner().start()
-    listen_loop()
-elif sys.argv[1] == "client":
-    if len(sys.argv) != 5:
-        print("Please specify the user to run the command as,",
-                "the command and the log file location")
+    send(settings.SERVER, message('JOB_REQ', req), block=True)
+
+if __name__ == '__main__':
+    if len(sys.argv) == 1:
+        print("Please specify \"server\" or \"client\"")
         sys.exit(1)
 
-    cmd = {}
-    cmd['user'] = sys.argv[2]
-    cmd['cmd'] = sys.argv[3]
-    cmd['log'] = sys.argv[4]
+    if sys.argv[1] == "server":
+        hearbeat().start()
+        cleaner().start()
+        listen_loop()
+    elif sys.argv[1] == "client":
+        if len(sys.argv) != 6:
+            print("Please specify the user to run the command as,",
+                    "the command and the log file location")
+            sys.exit(1)
 
-    send(settings.SERVER, message('JOB_REQ', cmd), block=True)
-else:
-    print("Invalid argument, needs to be either \"server\" or \"client\"")
-    sys.exit(1)
+        cmd = {}
+        cmd['user'] = sys.argv[2]
+        cmd['cmd'] = sys.argv[3]
+        cmd['log'] = sys.argv[4]
+        cmd['cwd'] = sys.argv[5]
+
+        client(**cmd)
+    else:
+        print("Invalid argument, needs to be either \"server\" or \"client\"")
+        sys.exit(1)
