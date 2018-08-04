@@ -1,5 +1,3 @@
-#! /usr/bin/python
-
 import socket
 import threading
 import settings
@@ -8,8 +6,10 @@ import time
 import signal
 import sys
 import subprocess
-from multiprocessing import cpu_count
 import shlex
+import os
+from multiprocessing import cpu_count
+from cryptography.fernet import Fernet, InvalidToken
 
 stats = {}
 sockets = []
@@ -30,6 +30,16 @@ peers = []
 with open(settings.PEERS, "r") as f:
     for p in f.readlines():
         peers.append(p.strip())
+
+if not os.path.isfile(settings.PSK):
+    key = Fernet.generate_key()
+    with open(settings.PSK, "w") as f:
+        f.write(key.decode("utf-8"))
+else:
+    with open(settings.PSK, "r") as f:
+        key = f.read().encode("ascii")
+
+fernet = Fernet(key)
 
 def log(*args, **kwargs):
     print(*args, **kwargs)
@@ -63,7 +73,7 @@ class send(threading.Thread):
                 return
             self.target = s
 
-        data = pickle.dumps(self.data)
+        data = fernet.encrypt(pickle.dumps(self.data))
         ms = len(data).to_bytes(settings.MESSAGE_SIZE, 'big')
         self.target.sendall(ms + data)
         self.target.close()
@@ -83,7 +93,12 @@ def recv(sock):
         return bytes(chunks)
 
     size = int.from_bytes(get(settings.MESSAGE_SIZE), 'big')
-    data = pickle.loads(get(size))
+    try:
+        m = get(size)
+        data = pickle.loads(fernet.decrypt(m))
+    except InvalidToken:
+        log("Could not decrypt message")
+        return None
     sock.close()
     return data
 
@@ -125,6 +140,9 @@ class server(threading.Thread):
 
     def run(self):
         msg = recv(self.csock)
+
+        if msg is None:
+            return
 
         if msg.mt == MSGT['HEARTBEAT']:
             hearbeat_handler(msg.data)

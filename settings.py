@@ -16,3 +16,6 @@ CLEAN_INTERVAL = 5
 CLEAN_TIMEOUT = 10
 # The server that the client uses to send the job to
 SERVER = "10.0.0.110"
+# PSK file
+import os
+PSK = os.path.join(os.environ['HOME'], ".pdist_psk")
