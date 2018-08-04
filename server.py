@@ -10,6 +10,7 @@ import sys
 import subprocess
 from multiprocessing import cpu_count
 
+stats = {}
 sockets = []
 def signal_handler(*args, **kwargs):
     for s in sockets:
@@ -83,7 +84,12 @@ def recv(sock):
     return data
 
 def hearbeat_handler(data):
-    pass
+    if not stats.get(data['host'], None):
+        log("Adding", data['host'], "to peers")
+        stats[data['host']] = {}
+    stats[data['host']]['update'] = int(time.time())
+    stats[data['host']]['cpu'] = data['cpu']
+    stats[data['host']]['mem'] = data['mem']
 
 class server(threading.Thread):
     def __init__(self, csock, addr, **kwargs):
@@ -129,6 +135,19 @@ class hearbeat(threading.Thread):
             for p in peers:
                 send(p, message('HEARTBEAT', collect_stats()))
 
+class cleaner(threading.Thread):
+    def run(self):
+        while True:
+            time.sleep(settings.CLEAN_INTERVAL)
+            t = int(time.time())
+            to_pop = []
+            for key in stats:
+                if t - stats[key]['update'] >= settings.CLEAN_TIMEOUT:
+                    to_pop.append(key)
+            for p in to_pop:
+                log("Removing", p, "from peers")
+                stats.pop(p)
+
 def listen_loop():
     ssock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ssock.bind((socket.gethostname(), settings.PORT))
@@ -138,9 +157,10 @@ def listen_loop():
     log("Server listening on:", ssock.getsockname())
     while True:
         csock, addr = ssock.accept()
-        log("Client connected from", addr)
+        log("Incoming connection from", addr)
         st = server(csock, addr)
         st.start()
 
 hearbeat().start()
+cleaner().start()
 listen_loop()
