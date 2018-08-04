@@ -14,8 +14,8 @@ CLEAN_INTERVAL = 5
 # Max time that a peer will still remain active before being removed for not
 # sending a hearbeat
 CLEAN_TIMEOUT = 10
-# The server that the client uses to send the job to
-SERVER = "10.0.0.110"
+# Logging level 0 = debug, 1 = info, 2 = warn
+LOG = 1
 # PSK file
 import os
 PSK = os.path.join(os.environ['HOME'], ".pdist_psk")

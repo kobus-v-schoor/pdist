@@ -13,12 +13,6 @@ from cryptography.fernet import Fernet, InvalidToken
 
 stats = {}
 sockets = []
-def signal_handler(*args, **kwargs):
-    for s in sockets:
-        s.close()
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
 
 MSGT = {
         'HEARTBEAT' : 1,
@@ -41,7 +35,9 @@ else:
 
 fernet = Fernet(key)
 
-def log(*args, **kwargs):
+def log(*args, level=0, **kwargs):
+    if level < settings.LOG:
+        return
     print(*args, **kwargs)
 
 class message:
@@ -68,15 +64,16 @@ class send(threading.Thread):
             try:
                 s.connect((self.target, settings.PORT))
             except ConnectionRefusedError:
-                log("Unable to connect to", self.target)
+                log("Unable to connect to", self.target, level=2)
                 s.close()
-                return
+                return False
             self.target = s
 
         data = fernet.encrypt(pickle.dumps(self.data))
         ms = len(data).to_bytes(settings.MESSAGE_SIZE, 'big')
         self.target.sendall(ms + data)
         self.target.close()
+        return True
 
 def recv(sock):
     def get(size):
@@ -97,14 +94,14 @@ def recv(sock):
         m = get(size)
         data = pickle.loads(fernet.decrypt(m))
     except InvalidToken:
-        log("Could not decrypt message")
+        log("Could not decrypt message", level=1)
         return None
     sock.close()
     return data
 
 def hearbeat_handler(data):
     if not stats.get(data['host'], None):
-        log("Adding", data['host'], "to peers")
+        log("Adding", data['host'], "to peers", level=1)
         stats[data['host']] = {}
     stats[data['host']]['update'] = int(time.time())
     stats[data['host']]['cpu'] = data['cpu']
@@ -123,7 +120,7 @@ def job_request_handler(data):
     for h in stats:
         if host == None or stats[h]['cpu'] < stats[host]['cpu']:
             host = h
-    log("Distributing job to", host)
+    log("Distributing job to", host, level=1)
     send(host, message('JOB', data))
 
 class server(threading.Thread):
@@ -187,7 +184,7 @@ class cleaner(threading.Thread):
                 if t - stats[key]['update'] >= settings.CLEAN_TIMEOUT:
                     to_pop.append(key)
             for p in to_pop:
-                log("Removing", p, "from peers")
+                log("Removing", p, "from peers", level=1)
                 stats.pop(p)
 
 def listen_loop():
@@ -196,14 +193,16 @@ def listen_loop():
     ssock.listen()
     sockets.append(ssock)
 
-    log("Server listening on:", ssock.getsockname())
+    log("Server listening on:", ssock.getsockname(), level=1)
     while True:
         csock, addr = ssock.accept()
         log("Incoming connection from", addr)
         st = server(csock, addr)
         st.start()
 
-def client(user, cmd, log, cwd):
+def client(servers, user, cmd, log, cwd):
+    if not type(servers) is list:
+        servers = [servers]
     req = {
             'user' : user,
             'cmd' : cmd,
@@ -211,30 +210,19 @@ def client(user, cmd, log, cwd):
             'cwd' : cwd
             }
 
-    send(settings.SERVER, message('JOB_REQ', req), block=True)
+    for server in servers:
+        if send(server, message('JOB_REQ', req), block=True):
+            return servers[1:] + servers[:1]
+    return None
 
 if __name__ == '__main__':
-    if len(sys.argv) == 1:
-        print("Please specify \"server\" or \"client\"")
-        sys.exit(1)
+    def signal_handler(*args, **kwargs):
+        for s in sockets:
+            s.close()
+        sys.exit(0)
 
-    if sys.argv[1] == "server":
-        hearbeat().start()
-        cleaner().start()
-        listen_loop()
-    elif sys.argv[1] == "client":
-        if len(sys.argv) != 6:
-            print("Please specify the user to run the command as,",
-                    "the command and the log file location")
-            sys.exit(1)
+    signal.signal(signal.SIGINT, signal_handler)
 
-        cmd = {}
-        cmd['user'] = sys.argv[2]
-        cmd['cmd'] = sys.argv[3]
-        cmd['log'] = sys.argv[4]
-        cmd['cwd'] = sys.argv[5]
-
-        client(**cmd)
-    else:
-        print("Invalid argument, needs to be either \"server\" or \"client\"")
-        sys.exit(1)
+    hearbeat().start()
+    cleaner().start()
+    listen_loop()
