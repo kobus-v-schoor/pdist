@@ -9,6 +9,7 @@ import signal
 import sys
 import subprocess
 from multiprocessing import cpu_count
+import shlex
 
 stats = {}
 sockets = []
@@ -20,7 +21,9 @@ def signal_handler(*args, **kwargs):
 signal.signal(signal.SIGINT, signal_handler)
 
 MSGT = {
-        'HEARTBEAT' : 1
+        'HEARTBEAT' : 1,
+        'JOB' : 2,
+        'JOB_REQ' : 3
 }
 
 peers = []
@@ -55,6 +58,7 @@ class send(threading.Thread):
             try:
                 s.connect((self.target, settings.PORT))
             except ConnectionRefusedError:
+                log("Unable to connect to", self.target)
                 s.close()
                 return
             self.target = s
@@ -91,6 +95,21 @@ def hearbeat_handler(data):
     stats[data['host']]['cpu'] = data['cpu']
     stats[data['host']]['mem'] = data['mem']
 
+def job_handler(data):
+    logs = open(data['log'], 'w')
+    user = data['user']
+    cmd = data['cmd']
+    cmd = shlex.split("sudo -u {} {}".format(shlex.quote(user), shlex.quote(cmd)))
+    subprocess.run(cmd, stdout=logs, stderr=subprocess.STDOUT)
+
+def job_request_handler(data):
+    host = None
+    for h in stats:
+        if host == None or stats[h]['cpu'] < stats[host]['cpu']:
+            host = h
+    log("Distributing job to", host)
+    send(host, message('JOB', data))
+
 class server(threading.Thread):
     def __init__(self, csock, addr, **kwargs):
         threading.Thread.__init__(self, **kwargs)
@@ -108,6 +127,10 @@ class server(threading.Thread):
 
         if msg.mt == MSGT['HEARTBEAT']:
             hearbeat_handler(msg.data)
+        elif msg.mt == MSGT['JOB']:
+            job_handler(msg.data)
+        elif msg.mt == MSGT['JOB_REQ']:
+            job_request_handler(msg.data)
 
 def collect_stats():
     def cpu_load():
@@ -161,6 +184,26 @@ def listen_loop():
         st = server(csock, addr)
         st.start()
 
-hearbeat().start()
-cleaner().start()
-listen_loop()
+if len(sys.argv) == 1:
+    print("Please specify \"server\" or \"client\"")
+    sys.exit(1)
+
+if sys.argv[1] == "server":
+    hearbeat().start()
+    cleaner().start()
+    listen_loop()
+elif sys.argv[1] == "client":
+    if len(sys.argv) != 5:
+        print("Please specify the user to run the command as,",
+                "the command and the log file location")
+        sys.exit(1)
+
+    cmd = {}
+    cmd['user'] = sys.argv[2]
+    cmd['cmd'] = sys.argv[3]
+    cmd['log'] = sys.argv[4]
+
+    send(settings.SERVER, message('JOB_REQ', cmd), block=True)
+else:
+    print("Invalid argument, needs to be either \"server\" or \"client\"")
+    sys.exit(1)

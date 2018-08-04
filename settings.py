@@ -14,3 +14,5 @@ CLEAN_INTERVAL = 5
 # Max time that a peer will still remain active before being removed for not
 # sending a hearbeat
 CLEAN_TIMEOUT = 10
+# The server that the client uses to send the job to
+SERVER = "10.0.0.110"
