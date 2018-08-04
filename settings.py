@@ -1,0 +1,6 @@
+PEERS = "peers"
+PORT = 8124
+MTS = 4
+HEARTBEAT = 1
+MESSAGE_SIZE = 8 # In bytes
+RECEIVE_BUFF = 1024
