@@ -1,6 +1,6 @@
 import socket
 import threading
-import pickle
+import json
 import time
 import signal
 import sys
@@ -45,13 +45,11 @@ def log(*args, level=0, **kwargs):
         return
     print(*args, **kwargs)
 
-class message:
-    def __init__(self, mt, data):
-        self.mt = MSGT[mt]
-        self.data = data
+def message(mt, data):
+    return [MSGT[mt], data]
 
-    def get_mt(self):
-        return [key for key in MSGT if MSGT[key] == self.mt][0]
+def get_mt(mt):
+    return [key for key in MSGT if MSGT[key] == mt][0]
 
 class send(threading.Thread):
     def __init__(self, target, data, block=False, **kwargs):
@@ -74,7 +72,7 @@ class send(threading.Thread):
                 return False
             self.target = s
 
-        data = fernet.encrypt(pickle.dumps(self.data))
+        data = fernet.encrypt(str.encode(json.dumps(self.data)))
         ms = len(data).to_bytes(settings.MESSAGE_SIZE, 'big')
         self.target.sendall(ms + data)
         self.target.close()
@@ -97,7 +95,8 @@ def recv(sock):
     size = int.from_bytes(get(settings.MESSAGE_SIZE), 'big')
     try:
         m = get(size)
-        data = pickle.loads(fernet.decrypt(m))
+        data = bytes.decode(fernet.decrypt(m))
+        data = json.loads(data)
     except InvalidToken:
         log("Could not decrypt message", level=1)
         return None
@@ -146,12 +145,15 @@ class server(threading.Thread):
         if msg is None:
             return
 
-        if msg.mt == MSGT['HEARTBEAT']:
-            hearbeat_handler(msg.data)
-        elif msg.mt == MSGT['JOB']:
-            job_handler(msg.data)
-        elif msg.mt == MSGT['JOB_REQ']:
-            job_request_handler(msg.data)
+        mt = msg[0]
+        data = msg[1]
+
+        if mt == MSGT['HEARTBEAT']:
+            hearbeat_handler(data)
+        elif mt == MSGT['JOB']:
+            job_handler(data)
+        elif mt == MSGT['JOB_REQ']:
+            job_request_handler(data)
 
 def collect_stats():
     def cpu_load():
