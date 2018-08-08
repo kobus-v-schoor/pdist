@@ -24,10 +24,11 @@ MSGT = {
         'JOB_REQ' : 3
 }
 
-peers = []
-with open(settings.PEERS, "r") as f:
-    for p in f.readlines():
-        peers.append(p.strip())
+if __name__ == '__main__':
+    peers = []
+    with open(settings.PEERS, "r") as f:
+        for p in f.readlines():
+            peers.append(p.strip())
 
 if not os.path.isfile(settings.PSK):
     key = Fernet.generate_key()
