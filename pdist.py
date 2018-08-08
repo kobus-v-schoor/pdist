@@ -116,7 +116,8 @@ def job_handler(data):
     user = data['user']
     cmd = data['cmd']
     cwd = data['cwd']
-    cmd = shlex.split("sudo -u {} {}".format(shlex.quote(user), shlex.quote(cmd)))
+    cmd = shlex.split("sudo -u {} bash -c {}".format(shlex.quote(user),
+        shlex.quote(cmd)))
     subprocess.run(cmd, stdout=logs, stderr=subprocess.STDOUT, cwd=cwd)
 
 def job_request_handler(data):
