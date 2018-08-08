@@ -1,6 +1,10 @@
+import os
+
+DIR = os.path.dirname(os.path.abspath(__file__))
+
 ## All intervals are in seconds
 # File containing a list of peers
-PEERS = "peers"
+PEERS = os.path.join(DIR, "peers")
 # Port to listen on
 PORT = 8125
 # Interval at which to send heartbeat to peers
@@ -17,5 +21,4 @@ CLEAN_TIMEOUT = 10
 # Logging level 0 = debug, 1 = info, 2 = warn
 LOG = 1
 # PSK file
-import os
 PSK = os.path.join(os.environ['HOME'], ".pdist_psk")

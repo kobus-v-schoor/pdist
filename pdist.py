@@ -1,6 +1,5 @@
 import socket
 import threading
-import settings
 import pickle
 import time
 import signal
@@ -10,6 +9,11 @@ import shlex
 import os
 from multiprocessing import cpu_count
 from cryptography.fernet import Fernet, InvalidToken
+
+try:
+    import settings
+except ModuleNotFoundError:
+    from . import settings
 
 stats = {}
 sockets = []
