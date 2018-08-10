@@ -21,7 +21,8 @@ sockets = []
 MSGT = {
         'HEARTBEAT' : 1,
         'JOB' : 2,
-        'JOB_REQ' : 3
+        'JOB_REQ' : 3,
+        'JOB_STAT' : 4
 }
 
 if __name__ == '__main__':
@@ -65,7 +66,13 @@ class send(threading.Thread):
         if type(self.target) is str:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
-                s.connect((self.target, settings.PORT))
+                t = self.target.split(":")
+                a = t[0]
+                if len(t) == 2:
+                    p = int(t[1])
+                else:
+                    p = settings.PORT
+                s.connect((a, p))
             except ConnectionRefusedError:
                 log("Unable to connect to", self.target, level=2)
                 s.close()
@@ -118,7 +125,14 @@ def job_handler(data):
     cwd = data['cwd']
     cmd = shlex.split("sudo -u {} bash -c {}".format(shlex.quote(user),
         shlex.quote(cmd)))
-    subprocess.run(cmd, stdout=logs, stderr=subprocess.STDOUT, cwd=cwd)
+    cp = subprocess.run(cmd, stdout=logs, stderr=subprocess.STDOUT, cwd=cwd)
+
+    ps = {
+            'ret' : cp.returncode
+            }
+
+    msg = message('JOB_STAT', ps)
+    send("{}:{}".format(data['addr'], data['port']), msg)
 
 def job_request_handler(data):
     host = None
@@ -208,20 +222,54 @@ def listen_loop():
         st = server(csock, addr)
         st.start()
 
+def client_server(sock):
+    msg = recv(sock)
+
+    if msg is None:
+        return False
+
+    mt = msg[0]
+    data = msg[1]
+
+    if mt != MSGT['JOB_STAT']:
+        return False
+
+    return data
+
 def client(servers, user, cmd, log, cwd):
     if not type(servers) is list:
         servers = [servers]
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind((socket.gethostname(), 0))
+    sock.listen()
+
+    addr = sock.getsockname()
+
     req = {
             'user' : user,
             'cmd' : cmd,
             'log' : log,
-            'cwd' : cwd
+            'cwd' : cwd,
+            'addr' : addr[0],
+            'port' : addr[1]
             }
 
+    sent = False
     for server in servers:
         if send(server, message('JOB_REQ', req), block=True):
-            return servers[1:] + servers[:1]
-    return None
+            sent = True
+            break
+
+    if not sent:
+        return None
+
+    while True:
+        csock, addr = sock.accept()
+        cs = client_server(csock)
+        if not cs:
+            continue
+        return cs
 
 if __name__ == '__main__':
     def signal_handler(*args, **kwargs):
