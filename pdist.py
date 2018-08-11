@@ -7,7 +7,7 @@ import sys
 import subprocess
 import shlex
 import os
-from multiprocessing import cpu_count
+from multiprocessing import cpu_count, Process
 from cryptography.fernet import Fernet, InvalidToken
 
 try:
@@ -33,6 +33,9 @@ if __name__ == '__main__':
     with open(settings.PEERS, "r") as f:
         for p in f.readlines():
             peers.append(p.strip())
+
+    jobs = {}
+    job_lock = threading.Lock()
 
 if not os.path.isfile(settings.PSK):
     key = Fernet.generate_key()
@@ -121,6 +124,11 @@ def hearbeat_handler(data):
     stats[data['host']]['cpu'] = data['cpu']
     stats[data['host']]['mem'] = data['mem']
 
+def get_job_id():
+    if not jobs:
+        return 0
+    return sorted(jobs.keys())[-1] + 1
+
 def job_handler(data):
     logs = open(data['log'], 'w')
     user = data['user']
@@ -128,14 +136,36 @@ def job_handler(data):
     cwd = data['cwd']
     cmd = shlex.split("sudo -u {} bash -c {}".format(shlex.quote(user),
         shlex.quote(cmd)))
-    cp = subprocess.run(cmd, stdout=logs, stderr=subprocess.STDOUT, cwd=cwd)
 
-    ps = {
-            'ret' : cp.returncode
+    proc = subprocess.Popen(cmd, stdout=logs, stderr=subprocess.STDOUT, cwd=cwd)
+    proc.killed = False
+
+    job_lock.acquire()
+    jid = get_job_id()
+    jobs[jid] = proc
+    job_lock.release()
+
+    id_msg = {
+            'id' : jid,
+            'node' : "{}:{}".format(socket.gethostname(), settings.PORT)
             }
 
-    msg = message('JOB_EXIT', ps)
-    send("{}:{}".format(data['addr'], data['port']), msg)
+    send("{}:{}".format(data['addr'], data['port']), message('JOB_ID', id_msg))
+
+    proc.wait()
+
+    ps = {
+            'ret' : proc.returncode
+            }
+
+    if not proc.killed:
+        msg = message('JOB_EXIT', ps)
+        send("{}:{}".format(data['addr'], data['port']), msg)
+
+    job_lock.acquire()
+    jobs.pop(jid, None)
+    job_lock.release()
+
 
 def job_request_handler(data):
     host = None
@@ -144,6 +174,17 @@ def job_request_handler(data):
             host = h
     log("Distributing job to", host, level=1)
     send(host, message('JOB', data))
+
+def job_term(data):
+    job_lock.acquire()
+
+    j = jobs.get(data['id'], None)
+    if j:
+        j.killed = True
+        j.kill()
+        jobs.pop(data['id'])
+
+    job_lock.release()
 
 class server(threading.Thread):
     def __init__(self, csock, addr, **kwargs):
@@ -172,6 +213,8 @@ class server(threading.Thread):
             job_handler(data)
         elif mt == MSGT['JOB_REQ']:
             job_request_handler(data)
+        elif mt == MSGT['JOB_TERM']:
+            job_term(data)
 
 def collect_stats():
     def cpu_load():
@@ -292,9 +335,14 @@ class client:
     def join(self):
         self.thread.join()
 
+    def run(self):
+        self.start()
+        self.join()
+
     def terminate(self):
         send("{}:{}".format(self.req['addr'], self.req['port']),
                 message('JOB_INT_EXIT', None), block=True)
+        send(self.node, message('JOB_TERM', { 'id' : self.id }))
         self.sock.close()
 
 if __name__ == '__main__':
