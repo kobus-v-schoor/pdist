@@ -181,7 +181,7 @@ def job_term(data):
     j = jobs.get(data['id'], None)
     if j:
         j.killed = True
-        j.kill()
+        j.terminate()
         jobs.pop(data['id'])
 
     job_lock.release()
