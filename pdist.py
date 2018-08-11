@@ -19,10 +19,13 @@ stats = {}
 sockets = []
 
 MSGT = {
-        'HEARTBEAT' : 1,
-        'JOB' : 2,
-        'JOB_REQ' : 3,
-        'JOB_STAT' : 4
+        'HEARTBEAT' : 1, # Nodes use to notify peers of load values
+        'JOB' : 2, # Starts job on node
+        'JOB_REQ' : 3, # Requests job to be distributed
+        'JOB_ID' : 4, # Node notifies client of id info
+        'JOB_EXIT' : 5, # Node notifies client that job is done
+        'JOB_INT_EXIT' : 6, # Client notifies itself to exit
+        'JOB_TERM' : 7 # Client notifies node to terminate job
 }
 
 if __name__ == '__main__':
@@ -131,7 +134,7 @@ def job_handler(data):
             'ret' : cp.returncode
             }
 
-    msg = message('JOB_STAT', ps)
+    msg = message('JOB_EXIT', ps)
     send("{}:{}".format(data['addr'], data['port']), msg)
 
 def job_request_handler(data):
@@ -172,12 +175,12 @@ class server(threading.Thread):
 
 def collect_stats():
     def cpu_load():
-        s = subprocess.check_output(["uptime"]).decode("utf-8").strip()
+        s = subprocess.check_output(["uptime"]).decode().strip()
         s = [n.strip() for n in s.split()][-3:][1][:-1] # Use 5-minute average load
         return float(s) / cpu_count()
 
     def free_mem():
-        s = subprocess.check_output(["free"]).decode("utf-8").split("\n")[1]
+        s = subprocess.check_output(["free"]).decode().split("\n")[1]
         s = int(s.split()[-1])
         return s
 
@@ -222,54 +225,77 @@ def listen_loop():
         st = server(csock, addr)
         st.start()
 
-def client_server(sock):
-    msg = recv(sock)
+class client:
+    sock = None
+    def __init__(self, servers, user, cmd, log, cwd):
+        if type(servers) is str:
+            servers = [servers]
+        self.servers = servers
 
-    if msg is None:
-        return False
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.bind((socket.gethostname(), 0))
+        self.sock.listen()
 
-    mt = msg[0]
-    data = msg[1]
+        addr = self.sock.getsockname()
 
-    if mt != MSGT['JOB_STAT']:
-        return False
+        self.req = {
+                'user' : user,
+                'cmd' : cmd,
+                'log' : log,
+                'cwd' : cwd,
+                'addr' : addr[0],
+                'port' : addr[1]
+                }
 
-    return data
+    def close(self):
+        if not self.sock is None:
+            self.sock.close()
 
-def client(servers, user, cmd, log, cwd):
-    if not type(servers) is list:
-        servers = [servers]
+    def __enter__(self):
+        return self
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind((socket.gethostname(), 0))
-    sock.listen()
+    def __exit__(self, *args, **kwargs):
+        self.close()
 
-    addr = sock.getsockname()
+    def hmsg(self, sock):
+        msg = recv(sock)
 
-    req = {
-            'user' : user,
-            'cmd' : cmd,
-            'log' : log,
-            'cwd' : cwd,
-            'addr' : addr[0],
-            'port' : addr[1]
-            }
+        if msg is None:
+            return
 
-    sent = False
-    for server in servers:
-        if send(server, message('JOB_REQ', req), block=True):
-            sent = True
-            break
+        mt = msg[0]
+        data = msg[1]
 
-    if not sent:
-        return None
+        if mt == MSGT['JOB_ID']:
+            self.node = data['node']
+            self.id = data['id']
+        elif mt == MSGT['JOB_EXIT']:
+            self.retcode = data['ret']
+            return True
+        elif mt == MSGT['JOB_INT_EXIT']:
+            return True
 
-    while True:
-        csock, addr = sock.accept()
-        cs = client_server(csock)
-        if not cs:
-            continue
-        return cs
+    def cll(self):
+        while True:
+            with self.sock.accept()[0] as csock:
+                if self.hmsg(csock):
+                    break
+
+    def start(self):
+        self.thread = threading.Thread(target=self.cll)
+        self.thread.start()
+
+        for server in self.servers:
+            if send(server, message('JOB_REQ', self.req), block=True):
+                break
+
+    def join(self):
+        self.thread.join()
+
+    def terminate(self):
+        send("{}:{}".format(self.req['addr'], self.req['port']),
+                message('JOB_INT_EXIT', None), block=True)
+        self.sock.close()
 
 if __name__ == '__main__':
     def signal_handler(*args, **kwargs):
