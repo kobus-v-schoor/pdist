@@ -2,12 +2,10 @@ import socket
 import threading
 import json
 import time
-import signal
-import sys
 import subprocess
 import shlex
 import os
-from multiprocessing import cpu_count, Process
+from multiprocessing import cpu_count
 from cryptography.fernet import Fernet, InvalidToken
 
 try:
@@ -16,7 +14,6 @@ except ModuleNotFoundError:
     from . import settings
 
 stats = {}
-sockets = []
 
 MSGT = {
         'HEARTBEAT' : 1, # Nodes use to notify peers of load values
@@ -134,8 +131,7 @@ def job_handler(data):
     user = data['user']
     cmd = data['cmd']
     cwd = data['cwd']
-    cmd = shlex.split("sudo -u {} bash -c {}".format(shlex.quote(user),
-        shlex.quote(cmd)))
+    cmd = shlex.split("su {} -c {}".format(shlex.quote(user), shlex.quote(cmd)))
 
     proc = subprocess.Popen(cmd, stdout=logs, stderr=subprocess.STDOUT, cwd=cwd)
     proc.killed = False
@@ -166,7 +162,6 @@ def job_handler(data):
     jobs.pop(jid, None)
     job_lock.release()
 
-
 def job_request_handler(data):
     host = None
     for h in stats:
@@ -180,6 +175,7 @@ def job_term(data):
 
     j = jobs.get(data['id'], None)
     if j:
+        log("Terminating job:", j.pid, level=1)
         j.killed = True
         j.terminate()
         jobs.pop(data['id'])
@@ -200,6 +196,7 @@ class server(threading.Thread):
 
     def run(self):
         msg = recv(self.csock)
+        self.csock.close()
 
         if msg is None:
             return
@@ -256,17 +253,16 @@ class cleaner(threading.Thread):
                 stats.pop(p)
 
 def listen_loop():
-    ssock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    ssock.bind((socket.gethostname(), settings.PORT))
-    ssock.listen()
-    sockets.append(ssock)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as ssock:
+        ssock.bind((socket.gethostname(), settings.PORT))
+        ssock.listen()
 
-    log("Server listening on:", ssock.getsockname(), level=1)
-    while True:
-        csock, addr = ssock.accept()
-        log("Incoming connection from", addr)
-        st = server(csock, addr)
-        st.start()
+        log("Server listening on:", ssock.getsockname(), level=1)
+        while True:
+            csock, addr = ssock.accept()
+            log("Incoming connection from", addr)
+            st = server(csock, addr)
+            st.start()
 
 class client:
     sock = None
@@ -347,13 +343,6 @@ class client:
         self.sock.close()
 
 if __name__ == '__main__':
-    def signal_handler(*args, **kwargs):
-        for s in sockets:
-            s.close()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-
     hearbeat().start()
     cleaner().start()
     listen_loop()
