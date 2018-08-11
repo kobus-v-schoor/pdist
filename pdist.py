@@ -270,6 +270,7 @@ def listen_loop():
 
 class client:
     sock = None
+    retcode = 0
     def __init__(self, servers, user, cmd, log, cwd):
         if type(servers) is str:
             servers = [servers]
