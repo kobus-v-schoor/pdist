@@ -1,0 +1,9 @@
+[Unit]
+Description=pdist cluster server
+
+[Service]
+ExecStart=/bin/bash /opt/pdist/start.sh
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
