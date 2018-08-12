@@ -3,7 +3,7 @@ Description=pdist cluster server
 
 [Service]
 Environment="HOME=/root"
-ExecStart=/opt/pdist/venv/bin/python -u /opt/pdist/start.sh
+ExecStart=/opt/pdist/venv/bin/python -u /opt/pdist/pdist.py
 Type=simple
 
 [Install]
