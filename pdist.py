@@ -7,6 +7,7 @@ import shlex
 import os
 from multiprocessing import cpu_count
 from cryptography.fernet import Fernet, InvalidToken
+from datetime import datetime
 
 try:
     import settings
@@ -47,7 +48,7 @@ fernet = Fernet(key)
 def log(*args, level=0, **kwargs):
     if level < settings.LOG:
         return
-    print(*args, **kwargs)
+    print("[{}]".format(datetime.now()), *args, **kwargs)
 
 def message(mt, data):
     return [MSGT[mt], data]
