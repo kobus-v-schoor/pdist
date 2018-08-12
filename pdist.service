@@ -2,6 +2,7 @@
 Description=pdist cluster server
 
 [Service]
+Environment="HOME=/root"
 ExecStart=/bin/bash /opt/pdist/start.sh
 Type=simple
 
