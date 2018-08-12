@@ -21,4 +21,4 @@ CLEAN_TIMEOUT = 90
 # Logging level 0 = debug, 1 = info, 2 = warn
 LOG = 1
 # PSK file
-PSK = os.path.join(os.environ['HOME'], ".pdist_psk")
+PSK = os.path.join(os.environ.get('HOME', '/root'), ".pdist_psk")
