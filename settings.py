@@ -1,6 +1,7 @@
 import os
 
 DIR = os.path.dirname(os.path.abspath(__file__))
+HOME = "/var/www"
 
 ## All intervals are in seconds
 # File containing a list of peers
@@ -21,4 +22,4 @@ CLEAN_TIMEOUT = 90
 # Logging level 0 = debug, 1 = info, 2 = warn
 LOG = 1
 # PSK file
-PSK = os.path.join(os.environ.get('HOME', '/root'), ".pdist_psk")
+PSK = os.path.join(os.environ.get('HOME', HOME), ".pdist_psk")
