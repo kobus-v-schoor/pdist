@@ -77,7 +77,7 @@ class send(threading.Thread):
                     p = settings.PORT
                 s.connect((a, p))
             except ConnectionRefusedError:
-                log("Unable to connect to", self.target, level=2)
+                log("Unable to connect to", self.target)
                 s.close()
                 return False
             self.target = s
