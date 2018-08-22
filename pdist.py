@@ -22,7 +22,10 @@ MSGT = {
         'JOB_ID' : 4, # Node notifies client of id info
         'JOB_EXIT' : 5, # Node notifies client that job is done
         'JOB_INT_EXIT' : 6, # Client notifies itself to exit
-        'JOB_TERM' : 7 # Client notifies node to terminate job
+        'JOB_TERM' : 7, # Client notifies node to terminate job
+        'JOB_RES' : 8, # Client notifies node that it wants to resume job
+        'JOB_RES_ACC' : 9, # Node notifies client that job is still running
+        'JOB_DNE' : 10, # Node notifies client that job doesn't exist (exited)
 }
 
 if __name__ == '__main__':
@@ -37,10 +40,10 @@ if __name__ == '__main__':
 if not os.path.isfile(settings.PSK):
     key = Fernet.generate_key()
     with open(settings.PSK, "w") as f:
-        f.write(key.decode("utf-8"))
+        f.write(key.decode())
 else:
     with open(settings.PSK, "r") as f:
-        key = f.read().encode("ascii")
+        key = f.read().encode()
 
 fernet = Fernet(key)
 
@@ -121,10 +124,11 @@ def hearbeat_handler(data):
     stats[data['host']]['cpu'] = data['cpu']
     stats[data['host']]['mem'] = data['mem']
 
+# Abstraction
 def get_job_id():
-    if not jobs:
-        return 0
-    return sorted(jobs.keys())[-1] + 1
+    get_job_id.cur += 1
+    return get_job_id.cur
+get_job_id.cur = -1
 
 def job_handler(data):
     logs = open(data['log'], 'w')
@@ -138,7 +142,16 @@ def job_handler(data):
 
     job_lock.acquire()
     jid = get_job_id()
-    jobs[jid] = proc
+
+    job = {
+            'proc': proc,
+            'id': jid,
+            'killed': False,
+            'addr': data['addr'],
+            'port': data['port']
+            }
+
+    jobs[jid] = job
     job_lock.release()
 
     id_msg = {
@@ -154,11 +167,11 @@ def job_handler(data):
             'ret' : proc.returncode
             }
 
-    if not proc.killed:
-        msg = message('JOB_EXIT', ps)
-        send("{}:{}".format(data['addr'], data['port']), msg)
-
     job_lock.acquire()
+    if not jobs[jid]['killed']:
+        msg = message('JOB_EXIT', ps)
+        send("{}:{}".format(jobs[jid]['addr'], jobs[jid]['port']), msg)
+
     jobs.pop(jid, None)
     job_lock.release()
 
@@ -175,10 +188,24 @@ def job_term(data):
 
     j = jobs.get(data['id'], None)
     if j:
-        log("Terminating job:", j.pid, level=1)
-        j.killed = True
-        j.terminate()
-        jobs.pop(data['id'])
+        log("Terminating job:", j['id'], level=1)
+        j['killed'] = True
+        j['proc'].terminate()
+
+    job_lock.release()
+
+def job_resume_handler(data):
+    job_lock.acquire()
+
+    j = jobs.get(data['id'], None)
+    if j is None:
+        send("{}:{}".format(data['addr'], data['port']), message('JOB_DNE', None))
+    else:
+        log("Resuming job", data['id'], "from {}:{}".format(data['addr'],
+            data['port']), level=1)
+        j['addr'] = data['addr']
+        j['port'] = data['port']
+        send("{}:{}".format(data['addr'], data['port']), message('JOB_RES_ACC', None))
 
     job_lock.release()
 
@@ -212,6 +239,8 @@ class server(threading.Thread):
             job_request_handler(data)
         elif mt == MSGT['JOB_TERM']:
             job_term(data)
+        elif mt == MSGT['JOB_RES']:
+            job_resume_handler(data)
 
 def collect_stats():
     def cpu_load():
@@ -267,25 +296,36 @@ def listen_loop():
 class client:
     sock = None
     retcode = 0
-    def __init__(self, servers, user, cmd, log, cwd):
-        if type(servers) is str:
-            servers = [servers]
-        self.servers = servers
+    def __init__(self, servers = None, user = None, cmd = None, log = None,
+            cwd = None, node = None, jid = None):
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind((socket.gethostname(), 0))
         self.sock.listen()
-
         addr = self.sock.getsockname()
 
-        self.req = {
-                'user' : user,
-                'cmd' : cmd,
-                'log' : log,
-                'cwd' : cwd,
-                'addr' : addr[0],
-                'port' : addr[1]
-                }
+        if node:
+            self.node = node
+            self.jid = jid
+            self.addr = addr[0]
+            self.port = addr[1]
+        else:
+
+            if type(servers) is str:
+                servers = [servers]
+            self.servers = servers
+
+            self.req = {
+                    'user' : user,
+                    'cmd' : cmd,
+                    'log' : log,
+                    'cwd' : cwd,
+                    'addr' : addr[0],
+                    'port' : addr[1]
+                    }
+
+            self.id_lock = threading.Lock()
+            self.id_lock.acquire()
 
     def close(self):
         if not self.sock is None:
@@ -309,10 +349,15 @@ class client:
         if mt == MSGT['JOB_ID']:
             self.node = data['node']
             self.id = data['id']
+            self.id_lock.release()
         elif mt == MSGT['JOB_EXIT']:
             self.retcode = data['ret']
             return True
         elif mt == MSGT['JOB_INT_EXIT']:
+            return True
+        elif mt == MSGT['JOB_RES_ACC']:
+            return
+        elif mt == MSGT['JOB_DNE']:
             return True
 
     def cll(self):
@@ -321,6 +366,18 @@ class client:
                 if self.hmsg(csock):
                     break
 
+    def resume(self):
+        self.thread = threading.Thread(target=self.cll)
+        self.thread.start()
+
+        data = {
+                'id' : self.jid,
+                'addr' : self.addr,
+                'port' : self.port
+                }
+
+        send(self.node, message('JOB_RES', data), block=True)
+
     def start(self):
         self.thread = threading.Thread(target=self.cll)
         self.thread.start()
@@ -328,6 +385,11 @@ class client:
         for server in self.servers:
             if send(server, message('JOB_REQ', self.req), block=True):
                 break
+
+    def get_id(self):
+        self.id_lock.acquire()
+        self.id_lock.release()
+        return (self.node, self.id)
 
     def join(self):
         self.thread.join()
