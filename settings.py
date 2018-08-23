@@ -9,7 +9,7 @@ PEERS = os.path.join(DIR, "peers")
 # Port to listen on
 PORT = 8125
 # Interval at which to send heartbeat to peers
-HEARTBEAT = 30
+HEARTBEAT = 1
 # Pre-determined message size header size in bytes
 MESSAGE_SIZE = 8
 # Socket recieve buffer size

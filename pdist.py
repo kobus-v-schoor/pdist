@@ -154,6 +154,8 @@ def job_handler(data):
     jobs[jid] = job
     job_lock.release()
 
+    log("Starting job ID", jid, level=1)
+
     id_msg = {
             'id' : jid,
             'node' : "{}:{}".format(socket.gethostname(), settings.PORT)
@@ -167,6 +169,7 @@ def job_handler(data):
             'ret' : proc.returncode
             }
 
+    log("Job ID", jid, "finished, notifying client")
     job_lock.acquire()
     if not jobs[jid]['killed']:
         msg = message('JOB_EXIT', ps)
@@ -174,6 +177,8 @@ def job_handler(data):
 
     jobs.pop(jid, None)
     job_lock.release()
+
+    log("Job ID", jid, "finished with return code", proc.returncode, level=1)
 
 def job_request_handler(data):
     host = None
@@ -297,20 +302,20 @@ class client:
     sock = None
     retcode = 0
     def __init__(self, servers = None, user = None, cmd = None, log = None,
-            cwd = None, node = None, jid = None):
+            cwd = None, node = None, id = None):
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind((socket.gethostname(), 0))
         self.sock.listen()
         addr = self.sock.getsockname()
 
+        self.addr = addr[0]
+        self.port = addr[1]
+
         if node:
             self.node = node
-            self.jid = jid
-            self.addr = addr[0]
-            self.port = addr[1]
+            self.id = id
         else:
-
             if type(servers) is str:
                 servers = [servers]
             self.servers = servers
@@ -371,7 +376,7 @@ class client:
         self.thread.start()
 
         data = {
-                'id' : self.jid,
+                'id' : self.id,
                 'addr' : self.addr,
                 'port' : self.port
                 }
@@ -399,7 +404,7 @@ class client:
         self.join()
 
     def terminate(self):
-        send("{}:{}".format(self.req['addr'], self.req['port']),
+        send("{}:{}".format(self.addr, self.port),
                 message('JOB_INT_EXIT', None), block=True)
         send(self.node, message('JOB_TERM', { 'id' : self.id }))
         self.sock.close()
