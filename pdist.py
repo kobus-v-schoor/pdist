@@ -21,11 +21,10 @@ MSGT = {
         'JOB_REQ' : 3, # Requests job to be distributed
         'JOB_ID' : 4, # Node notifies client of id info
         'JOB_EXIT' : 5, # Node notifies client that job is done
-        'JOB_INT_EXIT' : 6, # Client notifies itself to exit
-        'JOB_TERM' : 7, # Client notifies node to terminate job
-        'JOB_RES' : 8, # Client notifies node that it wants to resume job
-        'JOB_RES_ACC' : 9, # Node notifies client that job is still running
-        'JOB_DNE' : 10, # Node notifies client that job doesn't exist (exited)
+        'JOB_TERM' : 6, # Client notifies node to terminate job
+        'JOB_RES' : 7, # Client notifies node that it wants to resume job
+        'JOB_RES_ACC' : 8, # Node notifies client that job is still running
+        'JOB_DNE' : 9, # Node notifies client that job doesn't exist (exited)
 }
 
 if __name__ == '__main__':
@@ -138,7 +137,6 @@ def job_handler(data):
     cmd = shlex.split("su {} -c {}".format(shlex.quote(user), shlex.quote(cmd)))
 
     proc = subprocess.Popen(cmd, stdout=logs, stderr=subprocess.STDOUT, cwd=cwd)
-    proc.killed = False
 
     job_lock.acquire()
     jid = get_job_id()
@@ -146,9 +144,8 @@ def job_handler(data):
     job = {
             'proc': proc,
             'id': jid,
-            'killed': False,
-            'addr': data['addr'],
-            'port': data['port']
+            'addr': [data['addr']],
+            'port': [data['port']]
             }
 
     jobs[jid] = job
@@ -171,9 +168,11 @@ def job_handler(data):
 
     log("Job ID", jid, "finished, notifying client")
     job_lock.acquire()
-    if not jobs[jid]['killed']:
+
+    job = jobs[jid]
+    for i in range(len(job['addr'])):
         msg = message('JOB_EXIT', ps)
-        send("{}:{}".format(jobs[jid]['addr'], jobs[jid]['port']), msg)
+        send("{}:{}".format(job['addr'][i], job['port'][i]), msg)
 
     jobs.pop(jid, None)
     job_lock.release()
@@ -194,7 +193,6 @@ def job_term(data):
     j = jobs.get(data['id'], None)
     if j:
         log("Terminating job:", j['id'], level=1)
-        j['killed'] = True
         j['proc'].terminate()
 
     job_lock.release()
@@ -208,8 +206,8 @@ def job_resume_handler(data):
     else:
         log("Resuming job", data['id'], "from {}:{}".format(data['addr'],
             data['port']), level=1)
-        j['addr'] = data['addr']
-        j['port'] = data['port']
+        j['addr'].append(data['addr'])
+        j['port'].append(data['port'])
         send("{}:{}".format(data['addr'], data['port']), message('JOB_RES_ACC', None))
 
     job_lock.release()
@@ -335,6 +333,7 @@ class client:
     def close(self):
         if not self.sock is None:
             self.sock.close()
+            self.sock = None
 
     def __enter__(self):
         return self
@@ -358,8 +357,6 @@ class client:
         elif mt == MSGT['JOB_EXIT']:
             self.retcode = data['ret']
             return True
-        elif mt == MSGT['JOB_INT_EXIT']:
-            return True
         elif mt == MSGT['JOB_RES_ACC']:
             return
         elif mt == MSGT['JOB_DNE']:
@@ -370,6 +367,7 @@ class client:
             with self.sock.accept()[0] as csock:
                 if self.hmsg(csock):
                     break
+        self.close()
 
     def resume(self):
         self.thread = threading.Thread(target=self.cll)
@@ -404,10 +402,7 @@ class client:
         self.join()
 
     def terminate(self):
-        send("{}:{}".format(self.addr, self.port),
-                message('JOB_INT_EXIT', None), block=True)
         send(self.node, message('JOB_TERM', { 'id' : self.id }))
-        self.sock.close()
 
 if __name__ == '__main__':
     hearbeat().start()
